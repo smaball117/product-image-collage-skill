@@ -242,7 +242,7 @@ def render_report(batch_dir, state):
         "", "## 警告及处理日志", "",
         *(f"- {w}" for w in state.get("warnings", [])),
     ]
-    (batch_dir / "report" / "report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
+    (batch_dir / ".skill" / "report.md").write_text("\n".join(report) + "\n", encoding="utf-8")
 
 
 def prepare(args):
@@ -270,17 +270,15 @@ def prepare(args):
     while batch_dir.exists():
         batch_dir = output_root / f"{stem}-{idx:02d}"
         idx += 1
-    for folder in ("source", "csv", "indesign", "exported", "renamed", "cleaned", "report"):
-        (batch_dir / folder).mkdir(parents=True)
-    fields = ["货号", "颜色"] + [f"@{s['label']}" for s in rule["slots"]]
-    csv_write(batch_dir / "csv" / "data_merge_utf16.csv", rows, fields, "utf-16")
-    csv_write(batch_dir / "csv" / "data_merge_utf8.csv", rows, fields, "utf-8-sig")
-    (batch_dir / "source" / "source-path.txt").write_text(str(images), encoding="utf-8")
-    (batch_dir / "indesign" / "IMPORT.txt").write_text(
-        "请手动在 InDesign 数据合并里选择 ../csv/data_merge_utf16.csv，"
-        "完成排版并导出图片，然后运行 resume。\n", encoding="utf-8")
+    batch_dir.mkdir(parents=True, exist_ok=False)
+    meta = batch_dir / ".skill"
+    meta.mkdir()
+    fields = ["货号", "颜色"] + [f"@{slot['label']}" for slot in rule["slots"]]
+    csv_name = "图片汇总_待确认.csv" if unresolved else "图片汇总.csv"
+    csv_path = batch_dir / csv_name
+    csv_write(csv_path, rows, fields, "utf-16")
     if unresolved:
-        dump_json(batch_dir / "report" / "overrides-needed.json", unresolved)
+        dump_json(meta / "overrides-needed.json", unresolved)
     state = {
         "schema_version": 1, "date": day, "category": rule["category"],
         "images": str(images), "tools": str(Path(args.tools).resolve()),
@@ -288,12 +286,16 @@ def prepare(args):
         "warnings": warnings, "unresolved": unresolved, "missing": missing,
         "resume_processed": 0,
     }
-    dump_json(batch_dir / "batch.json", state)
+    dump_json(meta / "batch.json", state)
     render_report(batch_dir, state)
-    print(f"批次包：{batch_dir}")
-    print(f"CSV 数据：{len(rows)} 行，UTF-16 LE（带 BOM）")
-    print(f"缺失必选项：{len(missing)}；需确认映射：{sum(map(len, unresolved.values()))}")
-    print("状态：" + state["stage"])
+    print(f"第1步：生成图片汇总表：{csv_path}")
+    print(f"共 {len(rows)} 行，UTF-16 LE（带 BOM），图片字段以 @ 开头。")
+    print(f"缺少必选图片：{len(missing)}；需人工确定映射：{sum(map(len, unresolved.values()))}")
+    if unresolved:
+        print(f"请先核对图片并填写映射：{meta / 'overrides-needed.json'}")
+        print("当前表格仅供核对，暂勿导入 InDesign。")
+    else:
+        print("第1步已完成。下一步请人工在 InDesign 中进行数据合并并导出图片。")
     return 0
 
 
@@ -320,7 +322,7 @@ def check(args):
 
 def resume(args):
     batch_dir = Path(args.batch).expanduser().resolve()
-    manifest = batch_dir / "batch.json"
+    manifest = batch_dir / ".skill" / "batch.json"
     if not manifest.is_file():
         raise FileNotFoundError(f"找不到批次文件：{manifest}")
     state = json.loads(manifest.read_text(encoding="utf-8"))
@@ -329,10 +331,13 @@ def resume(args):
     if state["stage"] == "completed":
         raise ValueError("批次已经完成，禁止覆盖；如要重新处理请新建批次")
     tools = tool_paths(args.tools or state["tools"])
-    source = Path(args.exported).expanduser().resolve() if args.exported else batch_dir / "exported"
+    source = Path(args.exported).expanduser().resolve() if args.exported else batch_dir / ".skill" / "exported"
     if not source.is_dir():
         raise FileNotFoundError(f"ID 导出图片目录不存在：{source}")
-    exported = batch_dir / "exported"
+    exported = batch_dir / ".skill" / "exported"
+    exported.mkdir(parents=True, exist_ok=True)
+    (batch_dir / ".skill" / "renamed").mkdir(parents=True, exist_ok=True)
+    (batch_dir / "最终图片").mkdir(parents=True, exist_ok=True)
     # Initialize the external OCR engine before touching the batch exports.
     ocr = load_module(tools["ocr"], "local_ocr_functions")
     mask = load_module(tools["mask"], "local_mask_functions")
@@ -361,8 +366,8 @@ def resume(args):
             or any(ord(ch) < 32 or ch in '<>:"/\\|?*' for ch in stem)):
             warnings.append(f"OCR 未能生成合法名称：{path.name}")
             continue
-        renamed = batch_dir / "renamed" / (stem + path.suffix.lower())
-        cleaned = batch_dir / "cleaned" / (stem + ".png")
+        renamed = batch_dir / ".skill" / "renamed" / (stem + path.suffix.lower())
+        cleaned = batch_dir / "最终图片" / (stem + ".png")
         if cleaned.exists() and renamed.exists():
             # Previous attempt finished this image; keep both results.
             successes += 1
@@ -371,7 +376,7 @@ def resume(args):
             warnings.append(f"OCR 部分结果已存在，需人工检查：{path.name} => {stem}")
             continue
         shutil.copy2(path, renamed)
-        if mask.process_image(renamed, batch_dir / "cleaned"):
+        if mask.process_image(renamed, batch_dir / "最终图片"):
             successes += 1
         else:
             warnings.append(f"遮罩失败，已保留重命名副本：{renamed.name}")
@@ -379,8 +384,9 @@ def resume(args):
     state["stage"] = "completed" if successes == len(pics) else "completed_with_warnings"
     dump_json(manifest, state)
     render_report(batch_dir, state)
-    print(f"已处理 {successes}/{len(pics)} 张；输出：{batch_dir / 'cleaned'}")
-    print(f"状态：{state['stage']}，详情：{batch_dir / 'report' / 'report.md'}")
+    print(f"第4步：完成 {successes}/{len(pics)} 张；最终图片：{batch_dir / '最终图片'}")
+    if warnings:
+        print(f"问题详情：{batch_dir / '.skill' / 'report.md'}")
     return 0 if successes == len(pics) else 2
 
 
@@ -392,7 +398,7 @@ def main(argv=None):
     p.add_argument("--category", required=True)
     p.add_argument("--images")
     p.set_defaults(func=check)
-    p = sub.add_parser("prepare", help="生成数据合并批次包")
+    p = sub.add_parser("prepare", help="第1步：生成单个 ID 数据合并 CSV 表格")
     p.add_argument("--images", required=True)
     p.add_argument("--tools", required=True)
     p.add_argument("--category", required=True)
@@ -400,7 +406,7 @@ def main(argv=None):
     p.add_argument("--date", help="YYYY-MM-DD，默认本机当前日期")
     p.add_argument("--overrides", help="手工映射 JSON 文件")
     p.set_defaults(func=prepare)
-    p = sub.add_parser("resume", help="人工导出 ID 图片后的 OCR + 遮罩")
+    p = sub.add_parser("resume", help="第3、4步：人工 ID 导出后的 OCR + 去文字")
     p.add_argument("--batch", required=True)
     p.add_argument("--exported", help="ID 导出文件夹；可直接放在 batch/exported")
     p.add_argument("--tools", help="工具路径变更时指定")
