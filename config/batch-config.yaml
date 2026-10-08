@@ -1,23 +1,17 @@
-# 批次规范参考配置。
-# 实际运行入口：scripts/batch_runner.py；默认输出目录由输入图片路径决定，
-# 为【图片路径的上一级】/product-collage-output；可用 CLI --output-root 覆盖。
-# 此文件用于约定命名和目录，不会被 Python 自动读取成配置。
+# 第1步只交付一张图片汇总.csv，第4步完成后交付最终图片目录。
+# 此文件是文档约定，实际执行取决于 scripts/batch_runner.py。
 batch:
   naming:
     format: "{date}_{category}"
-  output_root: null  # null 表示使用 CLI 默认路径
-  collision: append_serial  # 同日同品类重复运行追加 -02, -03 ...
-folders:
-  - source
-  - csv
-  - indesign
-  - exported
-  - renamed
-  - cleaned
-  - report
-manifest: "batch.json"
-status:
-  needs_mapping: "发现歧义，需要人工映射"
-  waiting_indesign: "CSV已生成，等待人工ID操作"
-  completed: "后处理完成"
-  completed_with_warnings: "完成但有失败文件"
+  output_root: null
+  collision: append_serial
+user_visible:
+  step_1: "图片汇总.csv"
+  needs_mapping: "图片汇总_待确认.csv"
+  step_4: "最终图片"
+internal:
+  folder: ".skill"
+  manifest: "batch.json"
+  report: "report.md"
+  exported_copy: "exported"
+  renamed_copy: "renamed"
