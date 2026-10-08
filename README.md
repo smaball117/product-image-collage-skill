@@ -1,45 +1,60 @@
 # Product Image Collage Skill
 
-这是一个**本地运行、品类规则驱动、按日期打包**的商品图片生产 Skill。三个现有 Python 工具继续保留在用户电脑原始目录，仓库只包含规则、调度说明和一个轻量适配器。
+按用户原来的五步操作执行，不改变流程，也不提前输出后续步骤的文件。
 
-## 一句话调用
+**输入：** 图片路径 + 本地 Python 工具目录 + 品类（内裤 / 内衣套 / 后续品类）。
+
+**输出：** 第 1 步只有一张 CSV 表格；手动完成 InDesign 后，Agent 再进行 OCR 和白遮罩，最后只交付最终图片。
+
+## 第一步：制作表格
+
+~~~powershell
+python scripts/batch_runner.py check --images "F:\商品图片路径" --tools "F:\Python工具路径" --category "内裤"
+python scripts/batch_runner.py prepare --images "F:\商品图片路径" --tools "F:\Python工具路径" --category "内裤"
+~~~
+
+在输出日期品类目录里：
 
 ~~~text
-调用 product-image-collage skill
-图片路径：F:\2027春夏\商品图片
-工具路径：F:\AI_Tools\product_scripts
-品类：内裤
-帮我做拼图
+2026-10-08_内裤/
+└── 图片汇总.csv
 ~~~
 
-Agent 必须有本机文件读写及命令行权限（例如本地 Codex）。GitHub 网站或远程聊天中的 Agent 无法自动读取用户 F 盘。
+CSV 图片字段用 `@` 表头，内容为文件绝对路径，采用 UTF-16 LE（含 BOM），可直接尝试在 InDesign 数据合并导入。实际程序按英文 category ID 命名批次，例如 `2026-10-08_underwear`。
 
-## 命令（Windows PowerShell）
+如果有重复/无编号无法确定的图片，则先输出 `图片汇总_待确认.csv`，让设计师确认图片归属，不直接进入 ID 操作。
 
-在本仓库根目录执行：
+为支持异常排查和断点续跑，程序保留一个隐藏目录 `.skill/`。它不属于需要你交付和管理的文件，请在日常操作中忽略它。
+
+## 第二步：人工 InDesign
+
+InDesign → 窗口 → 实用程序 → 数据合并 → 选择 `图片汇总.csv` → 调整位置 → 导出图片。
+
+**此时 Agent 等待你操作，不会自己 OCR。**
+
+## 第三步、第四步：OCR 重命名 + 白遮罩
+
+用户完成 ID 导出后：
 
 ~~~powershell
-python scripts/batch_runner.py check --images "F:\2027春夏\商品图片" --tools "F:\AI_Tools\product_scripts" --category "内裤"
-python scripts/batch_runner.py prepare --images "F:\2027春夏\商品图片" --tools "F:\AI_Tools\product_scripts" --category "内裤"
+python scripts/batch_runner.py resume --batch "日期品类批次目录" --exported "ID导出图片路径"
 ~~~
 
-默认在图片路径的上一级创建 `product-collage-output/YYYY-MM-DD_underwear/`，生成 CSV、报告、批次状态。已有同名批次会新建 `-02` 等后缀，不覆盖旧结果。
+自动复制 ID 导出图，通过用户本地 `ocr_rename_images.py` 识别和重命名，再通过 `batch_add_white_mask.py` 去字，最终得到：
 
-打开 ID 手动数据合并：选 `csv/data_merge_utf16.csv`，确认页面位置后导出图片。然后运行：
-
-~~~powershell
-python scripts/batch_runner.py resume --batch "F:\2027春夏\product-collage-output\2026-10-08_underwear" --exported "F:\ID导出图片"
+~~~text
+2026-10-08_underwear/
+├── 图片汇总.csv
+└── 最终图片/
+    └── 按识别文字命名的图片.png
 ~~~
 
-文件保存到该批次下的 `exported/`、`renamed/`、`cleaned/`。
+如需追踪错误，可以展开隐藏的 `.skill/` 内部目录查看日志、OCR 中间结果；日常不用打开。
 
-## 技术约束
+## 必须了解
 
-- 扫描器原脚本仅支持内衣套固定字段；适配器复用其文件名解析函数，然后从对应品类 `rule.md` 读取映射，不直接运行原脚本的 `main()`。
-- OCR 原脚本直接原地修改文件；适配器调用其识别函数并将重命名结果写入**副本目录**。
-- 遮罩使用原脚本的 `process_image()`，固定坐标仅适用于相同 ID 版式；不同模板须确认坐标。
-- 需要 Python、Pillow；OCR 需本机原工具使用的 PaddleOCR/PaddlePaddle 环境。
-- 内衣套“无编号背面 PNG”不包含上/下衣信息，需要手工确认映射，绝不按文件名猜测。
-- **InDesign 操作是人工步骤**。此 Skill 不等于自动生成 ID 版式或自动点击 ID。
-
-更详细的说明见 `workflow/tool-execution.md`。
+- 三个 Python 原脚本仍放在你自己的工具文件夹，本仓库只调用它们的函数。
+- GitHub 无法读你电脑 F 盘，需要在本地 Codex / 其他有文件系统权限的 Agent 运行。
+- 模板涉及布局和遮罩坐标的调整必须人工验证。
+- 两个测试品类：`categories/underwear/rule.md`、`categories/underwear-set/rule.md`。
+- 原始图片不会被改名或覆写。
