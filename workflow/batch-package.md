@@ -1,27 +1,26 @@
-# 日期 + 品类批次包规范
+# 简化批次输出规范
 
-命名：`YYYY-MM-DD_{category}`，如 `2026-10-08_underwear`。同一天多次执行按序添加 `-02`、`-03`，禁止覆盖。
+用户输入图片路径、工具路径、品类，Skill 根据本机日期创建不同的批次目录。运行时目录名使用品类英文 ID：`YYYY-MM-DD_underwear` 或 `YYYY-MM-DD_underwear-set`。
 
-默认输出位置：输入图片路径的父目录下 `product-collage-output/`；亦可在 `prepare` 阶段使用 `--output-root`。
+**第一步完成后**，用户只需要找到：
 
 ~~~text
 2026-10-08_underwear/
-├── batch.json                 # 生产状态、源路径和工具路径
-├── source/
-│   └── source-path.txt        # 源图片位置记录，不复制 4500px 原始图
-├── csv/
-│   ├── data_merge_utf16.csv   # ID 用，UTF-16 LE + BOM
-│   └── data_merge_utf8.csv    # 核对用
-├── indesign/
-│   └── IMPORT.txt             # 人工 ID 操作交接说明
-├── exported/                  # 导出的原始拼图图片副本
-├── renamed/                   # OCR 后命名的副本
-├── cleaned/                   # 加固定白色遮罩后的最终图片
-└── report/
-    ├── report.md
-    └── overrides-needed.json  # 仅有无编号歧义或同字段冲突时生成
+└── 图片汇总.csv
 ~~~
 
-- **图像列均以 @ 开头**，文字列货号、颜色不加 @。
-- `needs_mapping` 说明无法确定图像对应关系；不能未经确认直接操作 ID。
-- `completed_with_warnings` 并非完全成功；根据报告处理个别失败图。
+含歧义则为 `图片汇总_待确认.csv`，尚不能导入 ID。
+
+**完成第二步的人工 InDesign 后**，第三和第四步自动执行，得到：
+
+~~~text
+2026-10-08_underwear/
+├── 图片汇总.csv
+└── 最终图片/
+    ├── 浅水蓝.png
+    └── …
+~~~
+
+程序还会创建隐藏的 `.skill/` 文件夹，保存 batch.json、report.md、overrides-needed.json（按需）、ID导出副本和OCR重命名副本。**这些不是用户要直接操作的交付物**，不要在普通回复里列出详细目录树。
+
+原始图片不复制、不修改。已存在同名批次时自动追加序号，防止覆盖。
