@@ -3,9 +3,11 @@
 """Local batch adapter. Original user-provided .py tools stay in their own directory."""
 import argparse
 import csv
+import ctypes
 import filecmp
 import importlib.util
 import json
+import os
 import re
 import shutil
 import sys
@@ -20,6 +22,17 @@ REQUIRED_TOOLS = {
     "mask": "batch_add_white_mask.py",
 }
 SUPPORTED = {".png", ".jpg", ".jpeg"}
+
+
+def hide_internal_directory(path):
+    """On Windows a leading dot does not hide a folder in Explorer."""
+    if os.name == "nt":
+        api = ctypes.windll.kernel32
+        attributes = api.GetFileAttributesW(str(path))
+        if attributes == 0xFFFFFFFF:
+            raise OSError(f"无法读取内部目录属性：{path}")
+        if not api.SetFileAttributesW(str(path), attributes | 0x2):
+            raise OSError(f"无法设置内部目录为隐藏：{path}")
 
 
 def load_module(path, name):
@@ -273,6 +286,7 @@ def prepare(args):
     batch_dir.mkdir(parents=True, exist_ok=False)
     meta = batch_dir / ".skill"
     meta.mkdir()
+    hide_internal_directory(meta)
     fields = ["货号", "颜色"] + [f"@{slot['label']}" for slot in rule["slots"]]
     csv_name = "图片汇总_待确认.csv" if unresolved else "图片汇总.csv"
     csv_path = batch_dir / csv_name
