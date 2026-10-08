@@ -4,11 +4,9 @@
 
 商品图片自动拼图生产 Skill。
 
-目标：根据用户提供的商品路径、品类和工具路径，自动读取对应品类规则，调用本地 Python 工具完成商品图片整理流程。
+本 Skill 采用「批次生产（Batch Production）」模式。
 
-本 Skill 采用：
-
-「主 Skill 调度 + 品类规则 + 外部工具路径配置」架构。
+目标：用户提供商品图片路径和本地工具路径，Skill 根据品类规则调用对应工具，生成标准化商品图片生产批次包。
 
 ---
 
@@ -19,133 +17,142 @@
 ```
 调用 product-image-collage skill
 
-产品路径：xxx
-
-品类：内裤 / 内衣套 / 其他
+图片路径：xxx
 
 工具路径：xxx
 
-帮我做拼图
+品类：内裤 / 内衣套 / 其他
+
+执行商品拼图
 ```
-
----
-
-# Tool Configuration
-
-用户提供工具目录后，读取其中的 Python 工具：
-
-```
-scan_product_images.py
-ocr_rename_images.py
-batch_add_white_mask.py
-```
-
-工具不要求存放在 GitHub Skill 仓库中。
-
-Skill 只负责调度，不复制工具文件。
 
 ---
 
 # Core Workflow
 
-## Step 1：确认输入信息
+## Step 1：创建生产批次
 
-必须获取：
+根据日期和品类创建批次名称：
 
-- 产品图片路径
-- 产品品类
-- Python 工具路径
+```
+YYYY-MM-DD_品类
+```
 
-禁止根据图片内容猜测品类。
+例如：
+
+```
+2026-10-08_underwear
+```
+
+所有输出文件进入该批次目录。
 
 ---
 
 ## Step 2：加载品类规则
 
-根据用户提供的品类读取：
+根据品类读取：
 
 ```
 categories/{category}/rule.md
 ```
 
-规则文件负责定义：
+规则负责：
 
-- 图片命名规则
+- 图片命名识别
 - 图片类型映射
-- 文件夹结构
 - 拼图顺序
 - 异常处理
 
-不同品类禁止共享编号解释。
+不同品类禁止共享编号逻辑。
 
 ---
 
-## Step 3：调用图片扫描工具
+## Step 3：调用本地工具
 
-调用：
+工具由用户提供路径。
 
-```
-scan_product_images.py
-```
+工具包括：
 
-输入：
+### scan_product_images.py
 
-- 产品图片路径
+用途：
 
-输出：
-
-- 图片分类结果
-- CSV数据
+- 扫描商品图片目录
+- 识别货号和颜色
+- 生成图片映射数据
 
 ---
 
-## Step 4：人工 InDesign 节点
+### ocr_rename_images.py
 
-保留人工操作：
-
-- 导入 CSV
-- 数据合并
-- 调整位置
-- 导出图片
-
-Skill 不模拟设计软件操作。
-
----
-
-## Step 5：OCR 后处理
-
-调用：
-
-```
-ocr_rename_images.py
-```
-
-作用：
+用途：
 
 - OCR识别图片文字
 - 根据识别结果重命名图片
 
 ---
 
-## Step 6：图片清理
+### batch_add_white_mask.py
 
-调用：
+用途：
+
+- 清理图片中文字区域
+- 输出处理后的商品图片
+
+---
+
+## Step 4：人工设计节点
+
+以下流程保留人工：
+
+- InDesign 数据合并
+- 页面位置调整
+- 最终导出确认
+
+Skill 不自动模拟设计软件操作。
+
+---
+
+# Output Batch Structure
+
+标准输出：
 
 ```
-batch_add_white_mask.py
+output/
+
+└── YYYY-MM-DD_品类/
+
+    ├── csv/
+    │
+    ├── indesign/
+    │
+    ├── exported/
+    │
+    ├── renamed/
+    │
+    ├── cleaned/
+    │
+    └── report.md
 ```
-
-作用：
-
-- 删除导出图片中的文字区域
-- 输出清理后的图片
 
 ---
 
 # Hard Rules
 
-1. 不允许跨品类解释图片编号。
-2. 不修改原始图片。
-3. 所有处理输出到新目录。
-4. 所有异常生成报告。
-5. 新增品类必须新增独立 rule.md。
+1. 原始图片目录禁止修改。
+2. 所有处理结果必须进入批次目录。
+3. 图片编号必须根据品类 rule.md 判断。
+4. 工具路径由用户提供，不固定写入 Skill。
+5. 每个批次必须生成处理记录。
+
+---
+
+# Future Extension
+
+新增品类只需要增加：
+
+```
+categories/{new-category}/rule.md
+```
+
+无需修改核心工作流。
