@@ -59,9 +59,9 @@ class BatchRunnerTests(unittest.TestCase):
                      "--images", self.base / "products")
         self.prepare("内裤")
         batch = self.out / "2026-10-08_underwear"
-        encoded = (batch / "csv" / "data_merge_utf16.csv").read_bytes()
+        encoded = (batch / "图片汇总.csv").read_bytes()
         self.assertTrue(encoded.startswith(b"\xff\xfe"), "Missing UTF-16 LE BOM")
-        with (batch / "csv" / "data_merge_utf16.csv").open(encoding="utf-16", newline="") as stream:
+        with (batch / "图片汇总.csv").open(encoding="utf-16", newline="") as stream:
             records = list(csv.DictReader(stream))
         self.assertEqual(len(records), 1)
         row = records[0]
@@ -70,17 +70,20 @@ class BatchRunnerTests(unittest.TestCase):
         self.assertTrue(row["@内裤背面"].endswith("0N2A0873-2.png"))
         self.assertTrue(row["@裤口细节"].endswith("IMG_8846-2.jpg"))
         self.assertTrue(row["@其他细节"].endswith("IMG_8850.jpg"))
-        self.assertEqual(json.loads((batch / "batch.json").read_text(encoding="utf-8"))["stage"], "waiting_indesign")
+        self.assertEqual(json.loads((batch / ".skill" / "batch.json").read_text(encoding="utf-8"))["stage"], "waiting_indesign")
         self.assertTrue((self.input / "0N2A0873-1.png").exists())
+        visible = sorted(p.name for p in batch.iterdir() if not p.name.startswith("."))
+        self.assertEqual(visible, ["图片汇总.csv"], "第1步只应提供一张 CSV 表格")
 
     def test_unnumbered_back_not_guessed(self):
         self.add("top-1.png", "bottom-2.png", "0N2A6666.png", "0N2A6668.png")
         self.prepare("内衣套")
         batch = self.out / "2026-10-08_underwear-set"
-        state = json.loads((batch / "batch.json").read_text(encoding="utf-8"))
+        state = json.loads((batch / ".skill" / "batch.json").read_text(encoding="utf-8"))
         self.assertEqual(state["stage"], "needs_mapping")
         self.assertIn("0N2A0873/01_浅水蓝", state["unresolved"])
-        with (batch / "csv" / "data_merge_utf16.csv").open(encoding="utf-16", newline="") as stream:
+        self.assertFalse((batch / "图片汇总.csv").exists())
+        with (batch / "图片汇总_待确认.csv").open(encoding="utf-16", newline="") as stream:
             row = list(csv.DictReader(stream))[0]
         self.assertEqual(row["@上衣背面"], "")
         self.assertEqual(row["@裤子背面"], "")
@@ -96,7 +99,7 @@ class BatchRunnerTests(unittest.TestCase):
         }, ensure_ascii=False), encoding="utf-8")
         self.prepare("内衣套", "--overrides", overrides)
         batch = self.out / "2026-10-08_underwear-set"
-        state = json.loads((batch / "batch.json").read_text(encoding="utf-8"))
+        state = json.loads((batch / ".skill" / "batch.json").read_text(encoding="utf-8"))
         self.assertEqual(state["stage"], "waiting_indesign")
         self.prepare("内衣套", "--overrides", overrides)
         self.assertTrue((self.out / "2026-10-08_underwear-set-02").exists())
@@ -111,9 +114,9 @@ class BatchRunnerTests(unittest.TestCase):
         self.command("resume", "--batch", batch, "--exported", raw)
         self.assertTrue((raw / "page-001.jpg").exists())
         self.assertEqual((raw / "page-001.jpg").read_bytes(), b"unchanged")
-        self.assertTrue((batch / "exported" / "page-001.jpg").exists())
-        self.assertTrue((batch / "renamed" / "测试颜色.jpg").exists())
-        self.assertTrue((batch / "cleaned" / "测试颜色.png").exists())
+        self.assertTrue((batch / ".skill" / "exported" / "page-001.jpg").exists())
+        self.assertTrue((batch / ".skill" / "renamed" / "测试颜色.jpg").exists())
+        self.assertTrue((batch / "最终图片" / "测试颜色.png").exists())
 
 
 if __name__ == "__main__":
