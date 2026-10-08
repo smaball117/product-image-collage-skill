@@ -3,6 +3,7 @@
 """Local batch adapter. Original user-provided .py tools stay in their own directory."""
 import argparse
 import csv
+import filecmp
 import importlib.util
 import json
 import re
@@ -332,19 +333,21 @@ def resume(args):
     if not source.is_dir():
         raise FileNotFoundError(f"ID 导出图片目录不存在：{source}")
     exported = batch_dir / "exported"
+    # Initialize the external OCR engine before touching the batch exports.
+    ocr = load_module(tools["ocr"], "local_ocr_functions")
+    mask = load_module(tools["mask"], "local_mask_functions")
+    engine = ocr.init_ocr()
     if source != exported:
         for path in images_direct(source):
             dest = exported / path.name
             if dest.exists():
-                raise FileExistsError(f"批次内 ID 导出文件已存在，拒绝覆盖：{dest}")
+                if not filecmp.cmp(path, dest, shallow=False):
+                    raise FileExistsError(f"ID 导出图与批次已有文件同名但内容不同：{dest}")
+                continue  # safe to resume an interrupted job
             shutil.copy2(path, dest)
     pics = images_direct(exported)
     if not pics:
         raise ValueError("未找到 ID 导出图片，等待人工导出")
-
-    ocr = load_module(tools["ocr"], "local_ocr_functions")
-    mask = load_module(tools["mask"], "local_mask_functions")
-    engine = ocr.init_ocr()
     warnings = state.setdefault("warnings", [])
     successes = 0
     for path in pics:
@@ -352,13 +355,20 @@ def resume(args):
         stem = ocr.clean_to_filename(text) if text else None
         if stem:
             stem = stem[:100].rstrip(" .")
-        if not stem or stem.upper() in {"CON", "PRN", "AUX", "NUL"}:
+        forbidden = {"CON", "PRN", "AUX", "NUL"}
+        forbidden.update({f"{prefix}{i}" for prefix in ("COM", "LPT") for i in range(1, 10)})
+        if (not stem or stem.upper().split(".")[0] in forbidden
+            or any(ord(ch) < 32 or ch in '<>:"/\\|?*' for ch in stem)):
             warnings.append(f"OCR 未能生成合法名称：{path.name}")
             continue
         renamed = batch_dir / "renamed" / (stem + path.suffix.lower())
         cleaned = batch_dir / "cleaned" / (stem + ".png")
+        if cleaned.exists() and renamed.exists():
+            # Previous attempt finished this image; keep both results.
+            successes += 1
+            continue
         if renamed.exists() or cleaned.exists():
-            warnings.append(f"OCR 文件名冲突，跳过：{path.name} => {stem}")
+            warnings.append(f"OCR 部分结果已存在，需人工检查：{path.name} => {stem}")
             continue
         shutil.copy2(path, renamed)
         if mask.process_image(renamed, batch_dir / "cleaned"):
