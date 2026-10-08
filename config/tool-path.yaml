@@ -1,20 +1,14 @@
-# Product Image Collage Skill 外部工具配置
-# 修改为本机 Python 工具所在目录
-
-# 示例:
-# tool_root: "F:/AI_Tools/product_scripts"
-
-tool_root: ""
-
+# 外部工具目录约定。
+# 注意：本文件只登记脚本文件名，不是运行时硬编码路径；不包含用户真实 F 盘路径。
+# Agent 必须将用户提供的工具目录通过 --tools 参数传给 scripts/batch_runner.py。
+tool_root: null
 tools:
   scan:
     file: "scan_product_images.py"
-    description: "扫描商品图片并生成CSV"
-
+    interface: "match_image_number"
   ocr:
     file: "ocr_rename_images.py"
-    description: "OCR识别图片文字并重命名"
-
+    interface: "init_ocr,extract_text_from_image,clean_to_filename"
   mask:
     file: "batch_add_white_mask.py"
-    description: "批量添加白色遮罩清理文字"
+    interface: "process_image"
