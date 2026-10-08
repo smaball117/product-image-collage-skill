@@ -71,3 +71,30 @@ python scripts/batch_runner.py resume --batch "F:\批次输出\2026-10-08_underw
 - 禁止在不同品类之间共享 `-1.png`、`-2.png` 的语义。
 - 禁止覆盖已存在批次，使用新批次名或恢复现有批次。
 - 不得把准备阶段成功误报为“已完成拼图”。
+
+
+## 无编号图片的人工确认示例
+
+若 `prepare` 打印 `needs_mapping`，查看当前批次 `report/overrides-needed.json`。这个文件中每个字段的值是**候选文件名数组**，不是最终选择。确认图片后另建一个 JSON 文件，将对应字段改成唯一的文件名字符串：
+
+~~~json
+{
+  "T20276D01/01_浅水蓝": {
+    "上衣背面": "0N2A6666.png",
+    "裤子背面": "0N2A6668.png"
+  }
+}
+~~~
+
+**示例文件名仅供说明，须根据实际图片内容由用户确认。** 然后运行：
+
+~~~powershell
+python scripts/batch_runner.py prepare --images "图片路径" --tools "工具路径" --category "内衣套" --overrides "F:\override.json"
+~~~
+
+系统会创建一个**新批次**而不是覆盖旧批次；查看新批次 `batch.json` 是否已进入 `waiting_indesign`。
+
+## 何时可以声称测试通过
+
+- GitHub Actions 中模拟外部脚本的单元测试通过，只说明批次逻辑、CSV 与安全流程在隔离环境中运行正确。
+- 真实投入生产之前，必须在用户本机再检查一次真实工具的版本与依赖，用一套测试商品确认 ID CSV 是否正常合并，用一张 ID 导出图确认 OCR 文本与遮罩坐标正确。
