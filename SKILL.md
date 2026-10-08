@@ -1,67 +1,98 @@
 ---
 name: product-image-collage
-description: 根据用户指定的商品图片路径、外部 Python 工具路径和品类规则，生成 InDesign 数据合并 CSV 及日期品类批次包，人工导出后安全执行 OCR 重命名和白色遮罩。
+description: 按商品品类识别本地图片，第一步只输出 InDesign 所需 UTF-16 LE CSV 表格，等待人工 InDesign 导出后再执行 OCR 重命名与遮罩去字。
 ---
 
 # Product Image Collage Skill
 
-## 用户命令
+## 用户输入
 
-“调用 product-image-collage skill。图片路径：…；工具路径：…；品类：内裤/内衣套；帮我做拼图。”
+“调用商品拼图 Skill，图片路径：xxx，工具路径：xxx，品类：内裤/内衣套，帮我做拼图。”
 
-从当前用户消息读取 **图片路径、工具路径、品类**；若此前已明确某项，可沿用。不要从文件名猜品类，也不要要求用户每次输入日期（默认本地当前日期）。输出路径默认在输入目录的父目录下 `product-collage-output`，可由用户另行指定。
+从输入提取三个值：`图片路径`、`工具路径`、`品类`。未指定时只问缺失的必要值。品类仅从 `categories/{category}/rule.md` 判断，不跨品类混用编号。
 
-## 权限与输入检查
+## 五步操作，按顺序执行
 
-- **仅本地有文件系统与命令行能力的 Agent** 可以处理 Windows 盘符；若不可访问，明确说明，不虚报执行。
-- 工作前读取 `categories/{品类ID}/rule.md` 中 `~~~json` 规则块；对应内裤为 `underwear`，内衣套为 `underwear-set`。其语义不能交叉使用。
-- 只调用本仓库 `scripts/batch_runner.py` 作为适配层。三个原始 Python 文件由用户提供路径，保持在本地目录，不复制进仓库。
-- 执行前阅读 `workflow/tool-execution.md` 与 `workflow/batch-package.md`，先用 `check` 检查；不要运行原工具的 `main()`（含硬编码路径/原地重命名/输入暂停等风险）。
+### Step 1｜自动制作 CSV 表格（此时只交付表格）
 
-## 工作流
-
-### 1. 前置检查
+先运行：
 
 ~~~powershell
 python scripts/batch_runner.py check --images "图片路径" --tools "工具路径" --category "品类"
-~~~
-
-### 2. 建批次并生成 CSV
-
-~~~powershell
 python scripts/batch_runner.py prepare --images "图片路径" --tools "工具路径" --category "品类"
 ~~~
 
-获取命令打印的真实批次目录。确认 `batch.json`、`report/report.md` 和 `csv/data_merge_utf16.csv` 均存在且内容合理。
+`prepare` 会用外部 `scan_product_images.py` 的解析函数和品类规则识别图片。每个“货号 + 颜色”为 CSV 一行，字段为 `货号`、`颜色`、以及以 `@` 开头的图片列。所有图片单元格填写文件的绝对路径。编码是 **UTF-16 LE（含 BOM）**。
 
-如果 `stage=needs_mapping`，不能让用户直接导入 ID；需要从 `report/overrides-needed.json` 找到候选文件，向用户确认无编号背面图等字段，制作 `--overrides` 文件重新运行 prepare。**不得猜配**。缺少必选素材必须在回复中指出。
+**第 1 步用户在输出目录中只能看到一个主文件**：
 
-### 3. 等待人工 InDesign
-
-明确指导用户：ID → 窗口 → 实用程序 → 数据合并 → 选择 UTF-16 LE CSV → 人工确认排版 → 导出图片。此期间应停止，不要自动执行 OCR（此时尚无 ID 导出图）。
-
-### 4. 续跑
-
-用户明确提供 ID 导出目录后：
-
-~~~powershell
-python scripts/batch_runner.py resume --batch "实际批次目录" --exported "ID导出图片目录"
+~~~text
+product-collage-output/
+└── YYYY-MM-DD_品类/
+    └── 图片汇总.csv
 ~~~
 
-先复制导出图，再调用外部 OCR 识别函数对**副本**重命名，最后调用外部遮罩函数输出 `cleaned/`。失败时保留源、汇报文件数量和警告，不假装完整成功。
+本地程序额外在隐藏的 `.skill/` 保存恢复信息和异常日志，Agent 不要主动把其内部文件列成用户要操作的结果。
 
-## 不可违背的规则
+如果出现无法确认的无编号图/重复图，只生成 `图片汇总_待确认.csv`，不生成可以误导用户导入 ID 的正式表格。Agent 简明说明哪张图片需要核对，等确认后重做。
 
-1. 原始图片不可原地改名、移动、覆盖、填色或重采样。
-2. UTF-16 LE CSV 要带 BOM、图片表头必须以 `@` 开头；其余字段为 `货号` 和 `颜色`。
-3. 任何歧义文件映射需人工确认，不允许“选择第一张”。
-4. 同名批次不覆盖，生成新编号。
-5. 不同品类只依据其自身 `rule.md`。
-6. 不能把 prepare 的成功误报为最终拼图完成；人工 ID 是必需节点。
-7. 遮罩参数继承用户外部脚本，若换模板必须先确认遮罩参数。
+**执行完成后停止，简短向用户汇报“CSV 生成成功 + 文件位置 + 记录数量 + 是否有缺图”，提示下一步人工 ID。不要自动执行第 3、4 步。**
 
-## 批次内容
+### Step 2｜用户手动完成 InDesign
 
-`YYYY-MM-DD_{category}/source,csv,indesign,exported,renamed,cleaned,report,batch.json`。
+用户自己操作：InDesign → 窗口 → 实用程序 → 数据合并 → 选择 `图片汇总.csv` → 手动排版 → 导出拼图图片。
 
-详细调用约定在 `workflow/tool-execution.md`，新增品类参照 `categories/template/rule-template.md`。
+此阶段 Agent 必须等待用户提供 ID 导出图片的路径。
+
+### Step 3｜Agent 调用 OCR 重命名
+
+用户完成导出后调用：
+
+~~~powershell
+python scripts/batch_runner.py resume --batch "实际 YYYY-MM-DD_品类目录" --exported "ID图片导出目录"
+~~~
+
+通过外部 `ocr_rename_images.py` 的 OCR 函数识别、重命名**复制的 ID 图片**。不改变原始图片文件名。
+
+### Step 4｜Agent 调用白遮罩去字
+
+同一条 `resume` 命令会接着调用外部 `batch_add_white_mask.py` 的 `process_image()` 完成去字。坐标沿用原脚本的固定位置，若更换 ID 模板需先验证。
+
+### Step 5｜输出最终图片
+
+用户只需要打开：
+
+~~~text
+YYYY-MM-DD_品类/
+├── 图片汇总.csv
+└── 最终图片/
+    ├── 某颜色.png
+    └── …
+~~~
+
+其他工作记录都在隐藏的 `.skill/` 目录内；不要主动给用户展示冗长内部目录、batch.json、日志等，除非有错误需要排查。
+
+## 简明答复格式
+
+第 1 步只回复：
+
+> 第 1 步完成：已生成 XX 行 CSV 表格。
+> 表格位置：完整路径
+> 检查结果：缺失 X 项／待确认 X 项。
+> 下一步：请在 InDesign 里导入 CSV 并导出图片。
+
+第 3、4 步完成后只回复：
+
+> 已完成 OCR 重命名与去文字。
+> 最终图片：完整路径
+> 成功 X 张，异常 X 张。
+
+## 必须遵守
+
+1. 不访问不到的本机盘符，不假称已执行。
+2. 不修改、不覆写原始图片；重复批次加 `-02`。
+3. CSV 图片列以 @ 开头，编码 UTF-16 LE + BOM。
+4. 映射歧义等待人工确认，不猜配。
+5. 外部三个 Python 工具由用户提供目录，本 Skill 只导入函数，不运行其带硬编码路径的 `main()`。
+6. 用户人工 ID 操作保留，Agent 不模拟点击。
+7. 默认第 1 步只交付 **一张 CSV**，之后才产出 **最终图片**。
