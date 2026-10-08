@@ -1,0 +1,20 @@
+# Product Image Collage Skill 外部工具配置
+# 修改为本机 Python 工具所在目录
+
+# 示例:
+# tool_root: "F:/AI_Tools/product_scripts"
+
+tool_root: ""
+
+tools:
+  scan:
+    file: "scan_product_images.py"
+    description: "扫描商品图片并生成CSV"
+
+  ocr:
+    file: "ocr_rename_images.py"
+    description: "OCR识别图片文字并重命名"
+
+  mask:
+    file: "batch_add_white_mask.py"
+    description: "批量添加白色遮罩清理文字"
