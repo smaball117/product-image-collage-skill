@@ -1,0 +1,63 @@
+"""Offline checks of the Windows InDesign COM bridge.
+
+These tests validate generation and guardrails only, not the Adobe GUI.
+"""
+import csv
+import importlib.util
+import tempfile
+import unittest
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parents[1]
+DRIVER = REPO / "scripts" / "indesign_merge.py"
+SPEC = importlib.util.spec_from_file_location("merge_bridge", DRIVER)
+module = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(module)
+
+
+class InDesignMergeDriverTests(unittest.TestCase):
+    def setUp(self):
+        self.work = tempfile.TemporaryDirectory()
+        self.addCleanup(self.work.cleanup)
+        root = Path(self.work.name)
+        self.template = root / "测试模板.indd"
+        self.template.write_bytes(b"placeholder for offline dry-run only")
+        self.csv = root / "数据合并.csv"
+        self.output = root / "拼图_待人工调整.indd"
+        self.fields = ["货号", "颜色", "@正面png", "@背面png",
+                       "@印花", "@裤口", "@裤边", "@裤腰"]
+
+    def write_csv(self, columns):
+        with self.csv.open("w", encoding="utf-16", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(columns)
+            writer.writerow(["01", "浅蓝"] + ["C:/sample.png"] * (len(columns) - 2))
+
+    def test_generate_windows_com_jsx_without_running_indesign(self):
+        self.write_csv(self.fields)
+        result = module.merge(self.template, self.csv, self.output, dry_run=True)
+        script = result["script"]
+        self.assertIn("dataMergeProperties", script)
+        self.assertIn("selectDataSource(csv)", script)
+        self.assertIn("RecordSelection.ALL_RECORDS", script)
+        self.assertIn("mergeRecords()", script)
+        self.assertIn("merged.save(target)", script)
+        self.assertIn("拼图", self.output.name)
+        self.assertIn("\\u62fc", script)  # path uses unicode escape sequences
+        self.assertNotIn("__JOB_JSON__", script)
+        self.assertFalse(self.output.exists())
+
+    def test_reject_bad_csv_headers(self):
+        self.write_csv(["货号", "颜色", "@one"])
+        with self.assertRaises(ValueError):
+            module.merge(self.template, self.csv, self.output, dry_run=True)
+
+    def test_refuse_overwrite_existing_merged_document(self):
+        self.write_csv(self.fields)
+        self.output.write_bytes(b"existing designer changes")
+        with self.assertRaises(FileExistsError):
+            module.merge(self.template, self.csv, self.output, dry_run=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
