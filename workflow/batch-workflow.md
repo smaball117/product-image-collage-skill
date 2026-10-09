@@ -1,25 +1,34 @@
-# 五步操作（严格按实际工作顺序）
+# 商品拼图两次输入流程
 
-**第 1 步 Agent 做表格**
+## 第一次输入：商品图片路径
 
-输入图片路径、工具和模板路径、品类，调用 `check` → `prepare`，输出日期品类批次下的 **图片汇总.csv**（UTF-16 LE + BOM，图片表头 `@`）；随后必须继续调用用户指定的 InDesign 模板副本，导入 CSV 并合并全部记录，保存 **待人工调图.indd**。具体绑定、检查和失败处理见 `../SKILL.md`。
+自动执行 check → prepare --merge。
+1. 按品类规则生成 UTF-16 LE 图片汇总.csv。
+2. 自动用内置 InDesign 模板打开 Adobe InDesign 桌面版。
+3. JSX 使用 selectDataSource() 导入 CSV、mergeRecords() 合并全部记录。
+4. 另存新可编辑文档 拼图_待人工调整.indd，状态 waiting_manual_export。
+5. Agent 告知用户可以调整并导出，**不是让用户手动导入 CSV**。
 
-如存在无编号歧义，先输出 **图片汇总_待确认.csv** 并要求人工确认后再生成正式表格。
+失败处理：
+- needs_mapping：同字段冲突，等待映射。
+- needs_images：必选图片缺失，不执行合并。
+- needs_template：.indd 缺失或未通过校验，不执行合并。
+- indesign_merge_failed：PowerShell COM/Adobe 合并未成功，保留 CSV 和错误日志。
+不能把“CSV 已生成”说成“ID 已填入”。
 
-**第 2 步 用户在 InDesign 操作**
+## 唯一人工环节
 
-Agent 完成导入并交付已填入文字和图片的可编辑 ID 文件后，用户手动调整大小、位置并导出图片。Agent 此时等待用户提供导出目录。
+设计师打开自动合并文档，调整版式并导出图片包。既不手动选数据源，也不手动创建合并文档。
 
-**第 3 步 Agent OCR 重命名**
+## 第二次输入：ID 导出图片包路径
 
-用户提供 ID 导出图片路径，`resume` 调用 `ocr_rename_images.py` 的函数，对副本识别和重命名。
+Agent 用第一次生成的批次目录运行 resume：
+1. OCR 识别并重命名导出图副本。
+2. 在固定文字区加白色遮罩去字。
+3. 仅给出最终图片目录、成功与异常数量。
 
-**第 4 步 Agent 白遮罩去文字**
+## 安全原则
 
-`resume` 继续调用 `batch_add_white_mask.py` 的函数，对重命名的副本遮罩去字。
-
-**第 5 步 最终交付**
-
-只告诉用户最终图片目录 `YYYY-MM-DD_品类/最终图片/` 及处理张数。所有批次状态、导出图副本和异常日志放在隐藏 `.skill/` 内部目录。
-
-`prepare` 完成只代表表格生成完成；第一段必须完成 InDesign 合并和保存才可交付。最终图片仍由用户调图、导出后进入后处理。
+不覆盖源素材、原始 ID 模板、旧批次或人工导出的源文件。
+模板缺失、脚本失败和图片缺失不静默放行。
+GitHub Actions 验证的是自动化逻辑，Windows InDesign GUI 需本机真实测试。
