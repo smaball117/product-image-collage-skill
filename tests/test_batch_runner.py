@@ -54,7 +54,9 @@ class BatchRunnerTests(unittest.TestCase):
 
     def test_check_and_underwear_csv_encoding(self):
         self.add("0N2A0873-1.png", "0N2A0873-2.png",
-                 "IMG_8846-2.jpg", "IMG_8850.jpg", "OTHER-1.jpg")
+                 "IMG_8846-2.jpg", "IMG_8848-3.jpg", "IMG_8849-4.jpg",
+                 "IMG_8847-5.jpg", "IMG_8850.jpg", "OTHER-1.jpg",
+                 "0N2A0873-3.png", "0N2A0873-5.png")
         self.command("check", "--tools", self.tools, "--category", "内裤",
                      "--images", self.base / "products")
         self.prepare("内裤")
@@ -62,47 +64,68 @@ class BatchRunnerTests(unittest.TestCase):
         encoded = (batch / "图片汇总.csv").read_bytes()
         self.assertTrue(encoded.startswith(b"\xff\xfe"), "Missing UTF-16 LE BOM")
         with (batch / "图片汇总.csv").open(encoding="utf-16", newline="") as stream:
-            records = list(csv.DictReader(stream))
+            reader = csv.DictReader(stream)
+            self.assertEqual(reader.fieldnames, [
+                "货号", "颜色", "@正面png", "@背面png",
+                "@印花", "@裤口", "@裤边", "@裤腰"
+            ], "内裤输出必须严格为 8 列且顺序固定")
+            records = list(reader)
         self.assertEqual(len(records), 1)
         row = records[0]
-        self.assertIn("@内裤正面", row)
-        self.assertTrue(row["@内裤正面"].endswith("0N2A0873-1.png"))
-        self.assertTrue(row["@内裤背面"].endswith("0N2A0873-2.png"))
-        self.assertTrue(row["@裤口细节"].endswith("IMG_8846-2.jpg"))
-        self.assertTrue(row["@其他细节"].endswith("IMG_8850.jpg"))
+        self.assertTrue(row["@正面png"].endswith("0N2A0873-1.png"))
+        self.assertTrue(row["@背面png"].endswith("0N2A0873-2.png"))
+        self.assertTrue(row["@印花"].endswith("IMG_8847-5.jpg"))
+        self.assertTrue(row["@裤口"].endswith("IMG_8846-2.jpg"))
+        self.assertTrue(row["@裤边"].endswith("IMG_8848-3.jpg"))
+        self.assertTrue(row["@裤腰"].endswith("IMG_8849-4.jpg"))
         self.assertEqual(json.loads((batch / ".skill" / "batch.json").read_text(encoding="utf-8"))["stage"], "waiting_indesign")
         self.assertTrue((self.input / "0N2A0873-1.png").exists())
         visible = sorted(p.name for p in batch.iterdir() if not p.name.startswith("."))
         self.assertEqual(visible, ["图片汇总.csv"], "第1步只应提供一张 CSV 表格")
 
-    def test_unnumbered_back_not_guessed(self):
-        self.add("top-1.png", "bottom-2.png", "0N2A6666.png", "0N2A6668.png")
+    def test_underwear_set_exact_columns_ignores_unnumbered_back(self):
+        self.add("top-1.png", "bottom-2.png",
+                 "neck-1.jpg", "sleeve-2.jpg", "shoulder-3.jpg",
+                 "waist-4.jpg", "0N2A6666.png", "0N2A6668.png")
+        self.prepare("内衣套")
+        batch = self.out / "2026-10-08_underwear-set"
+        state = json.loads((batch / ".skill" / "batch.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["stage"], "waiting_indesign")
+        self.assertEqual(state["unresolved"], {})
+        with (batch / "图片汇总.csv").open(encoding="utf-16", newline="") as stream:
+            reader = csv.DictReader(stream)
+            self.assertEqual(reader.fieldnames, [
+                "货号", "颜色", "@上衣png", "@下衣png",
+                "@领口", "@袖口", "@肩线", "@裤腰"
+            ], "内衣套输出必须严格为 8 列且顺序固定")
+            row = list(reader)[0]
+        self.assertTrue(row["@上衣png"].endswith("top-1.png"))
+        self.assertTrue(row["@下衣png"].endswith("bottom-2.png"))
+        self.assertTrue(row["@领口"].endswith("neck-1.jpg"))
+        self.assertTrue(row["@袖口"].endswith("sleeve-2.jpg"))
+        self.assertTrue(row["@肩线"].endswith("shoulder-3.jpg"))
+        self.assertTrue(row["@裤腰"].endswith("waist-4.jpg"))
+        self.assertNotIn("@上衣背面", row)
+        self.assertNotIn("@裤子背面", row)
+
+    def test_duplicate_slot_requires_confirmation_then_collision_suffix(self):
+        self.add("top-1.png", "top2-1.png", "bottom-2.png",
+                 "neck-1.jpg", "sleeve-2.jpg",
+                 "shoulder-3.jpg", "waist-4.jpg")
         self.prepare("内衣套")
         batch = self.out / "2026-10-08_underwear-set"
         state = json.loads((batch / ".skill" / "batch.json").read_text(encoding="utf-8"))
         self.assertEqual(state["stage"], "needs_mapping")
-        self.assertIn("0N2A0873/01_浅水蓝", state["unresolved"])
+        self.assertIn("上衣png", state["unresolved"]["0N2A0873/01_浅水蓝"])
         self.assertFalse((batch / "图片汇总.csv").exists())
-        with (batch / "图片汇总_待确认.csv").open(encoding="utf-16", newline="") as stream:
-            row = list(csv.DictReader(stream))[0]
-        self.assertEqual(row["@上衣背面"], "")
-        self.assertEqual(row["@裤子背面"], "")
-
-    def test_explicit_back_mapping_and_collision_name(self):
-        self.add("top-1.png", "bottom-2.png", "0N2A6666.png", "0N2A6668.png")
+        self.assertTrue((batch / "图片汇总_待确认.csv").exists())
         overrides = self.base / "override.json"
         overrides.write_text(json.dumps({
-            "0N2A0873/01_浅水蓝": {
-                "上衣背面": "0N2A6666.png",
-                "裤子背面": "0N2A6668.png"
-            }
+            "0N2A0873/01_浅水蓝": {"上衣png": "top-1.png"}
         }, ensure_ascii=False), encoding="utf-8")
         self.prepare("内衣套", "--overrides", overrides)
-        batch = self.out / "2026-10-08_underwear-set"
-        state = json.loads((batch / ".skill" / "batch.json").read_text(encoding="utf-8"))
-        self.assertEqual(state["stage"], "waiting_indesign")
-        self.prepare("内衣套", "--overrides", overrides)
-        self.assertTrue((self.out / "2026-10-08_underwear-set-02").exists())
+        ready = self.out / "2026-10-08_underwear-set-02"
+        self.assertTrue((ready / "图片汇总.csv").exists())
 
     def test_resume_preserves_originals(self):
         self.add("0N2A0873-1.png", "0N2A0873-2.png")
