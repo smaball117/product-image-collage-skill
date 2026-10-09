@@ -339,7 +339,7 @@ def resume(args):
     manifest = batch_dir / ".skill" / "batch.json"
     if not manifest.is_file():
         raise FileNotFoundError(f"找不到批次文件：{manifest}")
-    state = json.loads(manifest.read_text(encoding="utf-8"))
+    state = json.loads(manifest.read_text(encoding="utf-8-sig"))
     if state["stage"] == "needs_mapping":
         raise ValueError("批次存在未解决的图片字段映射；先处理 overrides 后重新 prepare")
     if state["stage"] == "completed":
