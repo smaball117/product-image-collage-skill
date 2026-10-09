@@ -43,9 +43,9 @@ python scripts/batch_runner.py prepare --images "图片路径" --tools "工具�
 python scripts/batch_runner.py prepare --images "图片路径" --tools "工具路径" --category "内衣套" --overrides "人工映射.json"
 ~~~
 
-## Step 2：用户在 InDesign 数据合并
+## Step 2：Agent 自动填入 InDesign，用户调图导出
 
-InDesign → 窗口 → 实用程序 → 数据合并 → 选择 `图片汇总.csv` → 手动调整版式 → 导出图片。到这里暂时不调用 OCR、遮罩。
+Agent 按 `../SKILL.md` 打开用户指定模板的副本，选择 CSV、核对真实字段绑定、合并全部记录，保存 `待人工调图.indd` 并检查文字与图片。随后用户手工调整图片大小和位置、导出图片；收到用户导出目录后才调用 OCR、遮罩。`prepare` 不含 InDesign 自动化，生成 CSV 后必须继续执行这些 ID 操作。
 
 ## Step 3：OCR 重命名
 
