@@ -38,6 +38,33 @@ def read_csv_header(csv_path):
     return header
 
 
+def validate_image_paths(csv_path):
+    """Fail before launching InDesign if any merged image path is empty/missing."""
+    path = Path(csv_path)
+    errors = []
+    records = 0
+    with path.open(encoding="utf-16", newline="") as stream:
+        reader = csv.DictReader(stream)
+        image_fields = [field for field in (reader.fieldnames or [])
+                        if field.startswith("@")]
+        for row_number, row in enumerate(reader, start=2):
+            records += 1
+            for field in image_fields:
+                value = (row.get(field) or "").strip()
+                if not value:
+                    errors.append(f"第 {row_number} 行 {field} 为空")
+                elif not Path(value).is_file():
+                    errors.append(f"第 {row_number} 行 {field} 图片不存在：{value}")
+                if len(errors) >= 8:
+                    break
+            if len(errors) >= 8:
+                break
+    if not records:
+        raise ValueError("数据合并 CSV 没有任何商品记录")
+    if errors:
+        raise ValueError("数据源图片检查失败，尚未启动 InDesign：\n" + "\n".join(errors))
+
+
 def generate_jsx(template, csv_path, output, result_file):
     """Safe string injection: JSON encodes Windows paths as JS literal escapes."""
     source = JSX_SOURCE.read_text(encoding="utf-8")
@@ -65,6 +92,8 @@ def merge(template, csv_path, output, dry_run=False, timeout=240):
         raise FileExistsError(f"禁止覆盖已合并的 INDD：{output}")
     if not output.parent.is_dir():
         raise FileNotFoundError(f"输出目录不存在：{output.parent}")
+    read_csv_header(csv_path)
+    validate_image_paths(csv_path)
     with tempfile.TemporaryDirectory(prefix="indesign-merge-") as temp:
         work = Path(temp)
         result_file = work / "result.txt"
@@ -88,9 +117,18 @@ def merge(template, csv_path, output, dry_run=False, timeout=240):
         except subprocess.TimeoutExpired as exc:
             raise RuntimeError("等待 InDesign 超时；请检查是否出现启动或数据合并对话框") from exc
         if not result_file.exists():
+            details = (result.stderr + "\n" + result.stdout)[-2400:]
+            modal_hint = (
+                "InDesign 可能已有未关闭的模态对话框。请到 InDesign 窗口手动"
+                "关闭当前警告/对话框后重新执行；脚本运行前已存在的窗口不能靠"
+                " JSX 内的 NEVER_INTERACT 设置关闭。"
+            ) if ("modal" in details.lower() or "模态" in details or
+                  "dialog" in details.lower()) else (
+                "请检查桌面 InDesign 是否已启动、是否弹出启动/登录对话框。"
+            )
             raise RuntimeError(
-                "没有收到 InDesign 执行结果，请检查 PowerShell/COM 连接；"
-                f"exit={result.returncode}, stderr={result.stderr[-2000:]}"
+                "没有收到 InDesign 脚本执行结果。" + modal_hint +
+                f" exit={result.returncode}, 原始错误：{details}"
             )
         lines = result_file.read_text(encoding="utf-8-sig").splitlines()
         if not lines or lines[0] != "OK":
