@@ -165,10 +165,46 @@ class BatchRunnerTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.out.exists())
 
+    def test_refuse_resume_before_indesign_auto_merge(self):
+        self.add("photo-1.png", "photo-2.png", "print-5.jpg")
+        self.prepare("内裤")
+        batch = self.out / "2026-10-08_underwear"
+        exported = self.base / "exports"
+        exported.mkdir()
+        (exported / "first.png").write_bytes(b"original")
+        r = subprocess.run(
+            [sys.executable, str(RUNNER), "resume", "--batch", str(batch),
+             "--exported", str(exported)],
+            capture_output=True, text=True, timeout=25,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertFalse((batch / "最终图片").exists())
+        self.assertEqual((exported / "first.png").read_bytes(), b"original")
+
+    def test_auto_merge_requires_actual_template(self):
+        self.add("photo-1.png", "photo-2.png", "print-5.jpg")
+        p = subprocess.run([
+            sys.executable, str(RUNNER), "prepare",
+            "--images", str(self.base / "products"),
+            "--category", "内裤", "--output-root", str(self.out),
+            "--date", "2026-10-08", "--merge"
+        ], capture_output=True, text=True, timeout=25)
+        # CI checkout does not contain the binary INDD, so there can be no
+        # false-success "waiting_manual_export" state.
+        batch = self.out / "2026-10-08_underwear"
+        state = json.loads((batch / ".skill" / "batch.json").read_text(encoding="utf-8"))
+        self.assertNotEqual(state["stage"], "waiting_manual_export")
+        self.assertFalse((batch / "拼图_待人工调整.indd").exists())
+
     def test_resume_preserves_originals(self):
         self.add("0N2A0873-1.png", "0N2A0873-2.png")
         self.prepare("内裤")
         batch = self.out / "2026-10-08_underwear"
+        # Simulate a successfully merged editable INDD ready for manual export.
+        state_file = batch / ".skill" / "batch.json"
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        state["stage"] = "waiting_manual_export"
+        state_file.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
         raw = self.base / "ID-exports"
         raw.mkdir()
         (raw / "page-001.jpg").write_bytes(b"unchanged")
