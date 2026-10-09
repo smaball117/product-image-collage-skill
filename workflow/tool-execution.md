@@ -50,3 +50,17 @@ python scripts/batch_runner.py resume --batch "批次路径" --exported "ID导�
 5. 若仍然报错，请保存 `.skill/report.md` 中的阶段标记 `step=...`、原始错误码和行号。根据 `open_template` / `select_csv_data_source` / `merge_all_records` 定位到具体故障环节，不要猜测原因或反复盲试。
 
 **禁止**强制终止正在使用的 InDesign、不允许自动点击关闭未知的确认框；脚本完成后设计师的 InDesign 应恢复原来的交互级别。
+
+
+## 其他 AI 版本 JSX 对比与合并原则（2026-10-09）
+
+用户提供的另一份 `indesign_merge.jsx` 也通过 `UserInteractionLevels.NEVER_INTERACT` 抑制运行时弹窗、通过 `finally` 恢复交互。但该版本直接设置 `INTERACT_WITH_ALL`，**没有恢复原来可能不同的交互设置**，而且没有模板残留链接检查和阶段化的报错信息。
+
+因此本仓库**保留现有增强版本**，不直接覆盖。后续任何变更必须维持：
+- `savedInteractionLevel = app.scriptPreferences.userInteractionLevel` 先读取原始值；
+- `finally` 中还原 `savedInteractionLevel`，不得硬编码恢复为 `INTERACT_WITH_ALL`；
+- `open_template`、`select_csv_data_source`、`merge_all_records` 的错误阶段记录；
+- `LinkStatus.LINK_MISSING` 检测和 Python 的 CSV 图片路径存在性校验；
+- 对于 **JSX 开始执行之前** 的模态框，返回可操作报错，要求先关闭现有对话框，不能擅自杀进程或强制点击未知提示。
+
+相关回归测试：`tests/test_indesign_merge.py`。GitHub Actions 验证的是代码与模拟 COM 失败，不表示在 Windows 上已完成真实 InDesign 合并测试。
