@@ -1,0 +1,5 @@
+# 使用和用户原 OCR 脚本匹配的 PaddleOCR 2.x 接口。
+# Windows 建议用 Python 3.10 / 3.11 的独立虚拟环境进行验证。
+Pillow>=10.0,<12
+paddlepaddle==2.6.2
+paddleocr==2.8.1
