@@ -5,6 +5,7 @@ import argparse
 import csv
 import ctypes
 import filecmp
+import hashlib
 import importlib.util
 import json
 import os
@@ -22,6 +23,29 @@ REQUIRED_TOOLS = {
     "mask": "batch_add_white_mask.py",
 }
 SUPPORTED = {".png", ".jpg", ".jpeg"}
+TEMPLATES = {
+    "underwear": (
+        "内裤数据合并模板-最终版.indd",
+        "6b57a0e097b2b31665a301ad817b1701f9a51a68a98a5335f514222613e93aab"
+    ),
+    "underwear-set": (
+        "内衣套数据合并模板.indd",
+        "be1c4ba81fbcb50bbcf1047495b8508843dfc258fb3acf00720a14e79c9bd57c"
+    ),
+}
+
+
+def verify_indesign_template(rule):
+    spec = TEMPLATES.get(rule["category"])
+    if not spec:
+        return None, "此品类还没有 ID 模板配置"
+    path = ROOT / "assets" / "indesign" / spec[0]
+    if not path.is_file():
+        return None, f"ID 模板尚未安装：{path}"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if digest != spec[1]:
+        return None, f"ID 模板校验值不一致，请确认是否使用原版文件：{path}"
+    return path.resolve(), None
 
 
 def hide_internal_directory(path):
@@ -331,17 +355,13 @@ def prepare(args):
     csv_write(csv_path, rows, fields, "utf-16")
     if unresolved:
         dump_json(meta / "overrides-needed.json", unresolved)
-    template_name = {
-        "underwear": "内裤数据合并模板-最终版.indd",
-        "underwear-set": "内衣套数据合并模板.indd",
-    }.get(rule["category"])
-    template_path = ROOT / "assets" / "indesign" / template_name if template_name else None
-    if template_path and not template_path.is_file():
-        warnings.append(f"本地未找到 ID 模板：{template_path}（请先安装模板文件）")
+    template_path, template_warning = verify_indesign_template(rule)
+    if template_warning:
+        warnings.append(template_warning)
     state = {
         "schema_version": 1, "date": day, "category": rule["category"],
         "images": str(images), "tools": str(tools["scan"].parent),
-        "template": str(template_path) if template_path and template_path.exists() else "",
+        "template": str(template_path) if template_path else "",
         "records": len(rows), "stage": "needs_mapping" if unresolved else "waiting_indesign",
         "warnings": warnings, "unresolved": unresolved, "missing": missing,
         "resume_processed": 0,
@@ -350,8 +370,10 @@ def prepare(args):
     render_report(batch_dir, state)
     print(f"识别品类：{rule['name']}")
     print(f"第1步：生成图片汇总表：{csv_path}")
-    if template_path and template_path.exists():
+    if template_path:
         print(f"第2步请手动打开 ID 模板：{template_path}")
+    elif template_warning:
+        print(f"注意：{template_warning}")
     print(f"共 {len(rows)} 行，UTF-16 LE（带 BOM），图片字段以 @ 开头。")
     print(f"缺少必选图片：{len(missing)}；需人工确定映射：{sum(map(len, unresolved.values()))}")
     if unresolved:
@@ -382,7 +404,12 @@ def check(args):
     else:
         rule = resolve_category(args.category)
     print("品类规则有效：" + rule["category"])
-    print("外部脚本及接口检查通过（尚未验证 OCR 运行环境）")
+    template_path, warning = verify_indesign_template(rule)
+    if template_path:
+        print("InDesign 模板文件校验通过：" + str(template_path))
+    elif warning:
+        print("模板提示：" + warning)
+    print("Python 脚本接口检查通过（尚未验证 PaddleOCR 运行环境）")
     if args.images:
         dirs = discover_product_dirs(Path(args.images).expanduser().resolve())
         print(f"发现货号目录：{len(dirs)} 个")
