@@ -47,6 +47,13 @@ class InDesignMergeDriverTests(unittest.TestCase):
         self.assertIn("UserInteractionLevels.NEVER_INTERACT", script)
         self.assertIn("savedInteractionLevel = app.scriptPreferences.userInteractionLevel", script)
         self.assertIn("app.scriptPreferences.userInteractionLevel = savedInteractionLevel", script)
+        self.assertNotIn(
+            "app.scriptPreferences.userInteractionLevel = UserInteractionLevels.INTERACT_WITH_ALL;",
+            script,
+            "不得强制修改用户原有的 InDesign 交互级别",
+        )
+        self.assertIn('stage = "select_csv_data_source"', script)
+        self.assertIn('stage = "merge_all_records"', script)
         self.assertIn("finally {", script)
         self.assertIn("verify_template_links", script)
         self.assertIn("LinkStatus.LINK_MISSING", script)
@@ -54,6 +61,22 @@ class InDesignMergeDriverTests(unittest.TestCase):
         self.assertIn("拼图", self.output.name)
         self.assertIn("\\u62fc", script)  # path uses unicode escape sequences
         self.assertNotIn("__JOB_JSON__", script)
+        self.assertFalse(self.output.exists())
+
+    def test_existing_modal_dialog_reports_actionable_error(self):
+        """COM can fail before JSX starts, so a JSX dialog setting alone is insufficient."""
+        from unittest.mock import patch
+        import subprocess
+
+        self.write_csv(self.fields)
+        failed_com = subprocess.CompletedProcess(
+            args=["powershell.exe"], returncode=1, stdout="",
+            stderr="InDesign: modal dialog or alert is active",
+        )
+        with patch.object(module.platform, "system", return_value="Windows"):
+            with patch.object(module.subprocess, "run", return_value=failed_com):
+                with self.assertRaisesRegex(RuntimeError, "已有未关闭的模态对话框"):
+                    module.merge(self.template, self.csv, self.output)
         self.assertFalse(self.output.exists())
 
     def test_reject_bad_csv_headers(self):
