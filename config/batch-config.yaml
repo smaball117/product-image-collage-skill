@@ -1,4 +1,4 @@
-# 第1步只交付一张图片汇总.csv，第4步完成后交付最终图片目录。
+# 第一段交付 CSV 和已填入数据的 ID；用户调图导出后交付最终图片。
 # 此文件是文档约定，实际执行取决于 scripts/batch_runner.py。
 batch:
   naming:
@@ -7,6 +7,7 @@ batch:
   collision: append_serial
 user_visible:
   step_1: "图片汇总.csv"
+  indesign: "待人工调图.indd"
   needs_mapping: "图片汇总_待确认.csv"
   step_4: "最终图片"
 internal:
