@@ -74,8 +74,9 @@ def resolve_category(category):
     return matches[0]
 
 
-def tool_paths(directory):
-    directory = Path(directory).expanduser().resolve()
+def tool_paths(directory=None):
+    # Skill 内自带三个工具；--tools 仅用于老版本/调试兼容。
+    directory = Path(directory).expanduser().resolve() if directory else ROOT / "scripts"
     if not directory.is_dir():
         raise FileNotFoundError(f"工具目录不存在：{directory}")
     result = {k: directory / v for k, v in REQUIRED_TOOLS.items()}
@@ -127,6 +128,42 @@ def classify_by_suffix(path, scan_module, slot_by_suffix):
         return None
     extension = ".jpg" if path.suffix.lower() in {".jpg", ".jpeg"} else ".png"
     return slot_by_suffix.get(f"-{number}{extension}")
+
+
+def detect_category(images_root, scan_module):
+    """从品类特有的 JPG 编号检测商品类型；有冲突时拒绝猜测。"""
+    seen = {"-1.jpg": 0, "-5.jpg": 0}
+    underwear_png_extra = 0
+    product_dirs = discover_product_dirs(images_root)
+    for product in product_dirs:
+        for color in product.iterdir():
+            if not color.is_dir():
+                continue
+            for p in images_direct(color):
+                n, pattern = scan_module.match_image_number(p.name)
+                if pattern != "hyphen" or not n:
+                    continue
+                ext = ".jpg" if p.suffix.lower() in {".jpg", ".jpeg"} else ".png"
+                key = f"-{n}{ext}"
+                if key in seen:
+                    seen[key] += 1
+                if key in {"-3.png", "-4.png", "-5.png"}:
+                    underwear_png_extra += 1
+
+    is_underwear = seen["-5.jpg"] > 0
+    is_set = seen["-1.jpg"] > 0
+    if is_underwear and not is_set:
+        return resolve_category("underwear")
+    if is_set and not is_underwear:
+        return resolve_category("underwear-set")
+    if is_underwear and is_set and underwear_png_extra:
+        # The extra underwear PNGs are useful signals, but simultaneous signature
+        # markers may indicate mixed products. Never silently guess a category.
+        raise ValueError("检测到内裤与内衣套混合标志（-5.jpg、-1.jpg），请指定 --category")
+    raise ValueError(
+        "仅凭当前图片无法唯一判断品类。请指定 --category 内裤 或 --category 内衣套；"
+        "以后可在规则中添加更明确的品类标志"
+    )
 
 
 def read_overrides(path):
@@ -261,9 +298,10 @@ def render_report(batch_dir, state):
 def prepare(args):
     images = Path(args.images).expanduser().resolve()
     tools = tool_paths(args.tools)
-    rule = resolve_category(args.category)
     overrides = read_overrides(args.overrides)
     scan_module = load_module(tools["scan"], "local_scan_image_names")
+    rule = (resolve_category(args.category) if args.category not in (None, "auto")
+            else detect_category(images, scan_module))
     for fn in ("match_image_number",):
         if not callable(getattr(scan_module, fn, None)):
             raise ValueError(f"扫描工具缺少函数 {fn}")
@@ -293,16 +331,27 @@ def prepare(args):
     csv_write(csv_path, rows, fields, "utf-16")
     if unresolved:
         dump_json(meta / "overrides-needed.json", unresolved)
+    template_name = {
+        "underwear": "内裤数据合并模板-最终版.indd",
+        "underwear-set": "内衣套数据合并模板.indd",
+    }.get(rule["category"])
+    template_path = ROOT / "assets" / "indesign" / template_name if template_name else None
+    if template_path and not template_path.is_file():
+        warnings.append(f"本地未找到 ID 模板：{template_path}（请先安装模板文件）")
     state = {
         "schema_version": 1, "date": day, "category": rule["category"],
-        "images": str(images), "tools": str(Path(args.tools).resolve()),
+        "images": str(images), "tools": str(tools["scan"].parent),
+        "template": str(template_path) if template_path and template_path.exists() else "",
         "records": len(rows), "stage": "needs_mapping" if unresolved else "waiting_indesign",
         "warnings": warnings, "unresolved": unresolved, "missing": missing,
         "resume_processed": 0,
     }
     dump_json(meta / "batch.json", state)
     render_report(batch_dir, state)
+    print(f"识别品类：{rule['name']}")
     print(f"第1步：生成图片汇总表：{csv_path}")
+    if template_path and template_path.exists():
+        print(f"第2步请手动打开 ID 模板：{template_path}")
     print(f"共 {len(rows)} 行，UTF-16 LE（带 BOM），图片字段以 @ 开头。")
     print(f"缺少必选图片：{len(missing)}；需人工确定映射：{sum(map(len, unresolved.values()))}")
     if unresolved:
@@ -314,7 +363,6 @@ def prepare(args):
 
 
 def check(args):
-    rule = resolve_category(args.category)
     tools = tool_paths(args.tools)
     for key, path in tools.items():
         module = load_module(path, "check_" + key)
@@ -326,6 +374,13 @@ def check(args):
         for fn in required:
             if not callable(getattr(module, fn, None)):
                 raise ValueError(f"{path.name} 缺少函数 {fn}")
+    if args.category in (None, "auto"):
+        if not args.images:
+            raise ValueError("自动识别品类必须提供 --images")
+        rule = detect_category(Path(args.images).expanduser().resolve(),
+                               load_module(tools["scan"], "auto_category_scanner"))
+    else:
+        rule = resolve_category(args.category)
     print("品类规则有效：" + rule["category"])
     print("外部脚本及接口检查通过（尚未验证 OCR 运行环境）")
     if args.images:
@@ -408,14 +463,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="商品批次拼图辅助处理工具")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("check", help="预检查，不更改文件")
-    p.add_argument("--tools", required=True)
-    p.add_argument("--category", required=True)
-    p.add_argument("--images")
+    p.add_argument("--tools", help="可选；默认使用 Skill/scripts 内置工具")
+    p.add_argument("--category", default="auto", help="可选；默认根据图片尾缀识别品类")
+    p.add_argument("--images", required=True)
     p.set_defaults(func=check)
     p = sub.add_parser("prepare", help="第1步：生成单个 ID 数据合并 CSV 表格")
     p.add_argument("--images", required=True)
-    p.add_argument("--tools", required=True)
-    p.add_argument("--category", required=True)
+    p.add_argument("--tools", help="可选；默认使用 Skill/scripts 内置工具")
+    p.add_argument("--category", default="auto", help="可选；默认根据图片尾缀识别品类")
     p.add_argument("--output-root")
     p.add_argument("--date", help="YYYY-MM-DD，默认本机当前日期")
     p.add_argument("--overrides", help="手工映射 JSON 文件")
