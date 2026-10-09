@@ -309,7 +309,7 @@ def prepare(args):
         print(f"请先核对图片并填写映射：{meta / 'overrides-needed.json'}")
         print("当前表格仅供核对，暂勿导入 InDesign。")
     else:
-        print("第1步已完成。下一步请人工在 InDesign 中进行数据合并并导出图片。")
+        print("CSV 已生成；第一段尚未完成。Agent 必须继续调用用户指定的 InDesign 模板，在副本中导入并合并全部记录，保存待人工调图.indd 后再交付用户调图和导出。")
     return 0
 
 
