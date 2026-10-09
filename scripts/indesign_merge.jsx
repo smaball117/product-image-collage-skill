@@ -41,6 +41,12 @@
             }
         }
 
+        // Avoid silently generating blank pages when a wrong/empty INDD is used.
+        // This product layout requires six image data-merge placeholders.
+        if (doc.dataMergeImagePlaceholders.length < 6) {
+            throw Error("Template has fewer than 6 image merge placeholders");
+        }
+
         // Existing source template already contains the user-designed frames.
         // Merge ALL rows into a new editable document, not PDF or images.
         doc.dataMergeOptions.createNewDocument = true;
