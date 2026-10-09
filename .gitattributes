@@ -1,0 +1,3 @@
+# InDesign 模板为二进制资源，不参与文本差异合并。
+*.indd binary
+*.idml binary
