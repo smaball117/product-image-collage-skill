@@ -127,6 +127,44 @@ class BatchRunnerTests(unittest.TestCase):
         ready = self.out / "2026-10-08_underwear-set-02"
         self.assertTrue((ready / "图片汇总.csv").exists())
 
+    def test_bundled_tools_and_auto_detect_underwear(self):
+        self.add("0N2A0873-1.png", "0N2A0873-2.png",
+                 "detail-5.jpg", "detail-2.jpg", "detail-3.jpg", "detail-4.jpg")
+        args = ("--images", self.base / "products", "--output-root", self.out,
+                "--date", "2026-10-08")
+        self.command("check", "--images", self.base / "products")
+        self.command("prepare", *args)
+        batch = self.out / "2026-10-08_underwear"
+        self.assertTrue((batch / "图片汇总.csv").is_file())
+        state = json.loads((batch / ".skill" / "batch.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["category"], "underwear")
+        self.assertEqual(Path(state["tools"]), REPO / "scripts")
+        with (batch / "图片汇总.csv").open(encoding="utf-16", newline="") as stream:
+            self.assertEqual(next(csv.reader(stream)), [
+                "货号", "颜色", "@正面png", "@背面png", "@印花", "@裤口", "@裤边", "@裤腰"
+            ])
+
+    def test_bundled_tools_and_auto_detect_underwear_set(self):
+        self.add("top-1.png", "pants-2.png",
+                 "neck-1.jpg", "cuff-2.jpg", "seam-3.jpg", "waist-4.jpg")
+        self.command("prepare", "--images", self.base / "products",
+                     "--output-root", self.out, "--date", "2026-10-08")
+        batch = self.out / "2026-10-08_underwear-set"
+        self.assertTrue((batch / "图片汇总.csv").exists())
+        with (batch / "图片汇总.csv").open(encoding="utf-16", newline="") as stream:
+            self.assertEqual(next(csv.reader(stream)), [
+                "货号", "颜色", "@上衣png", "@下衣png", "@领口", "@袖口", "@肩线", "@裤腰"
+            ])
+
+    def test_auto_detect_ambiguous_requires_category(self):
+        self.add("top-1.png", "pants-2.png", "neck-1.jpg", "print-5.jpg")
+        result = subprocess.run([
+            sys.executable, str(RUNNER), "prepare", "--images",
+            str(self.base / "products"), "--output-root", str(self.out)
+        ], capture_output=True, text=True, timeout=25)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.out.exists())
+
     def test_resume_preserves_originals(self):
         self.add("0N2A0873-1.png", "0N2A0873-2.png")
         self.prepare("内裤")
