@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sys
+import subprocess
 from datetime import date
 from pathlib import Path
 
@@ -366,12 +367,37 @@ def prepare(args):
         "warnings": warnings, "unresolved": unresolved, "missing": missing,
         "resume_processed": 0,
     }
+    # The complete workflow requires actually merging the CSV into a new editable
+    # InDesign document. Never claim handoff before DoScript succeeds.
+    if args.merge and not unresolved:
+        if missing:
+            state["stage"] = "needs_images"
+            state["warnings"].append("缺少必选图片，已停止自动 InDesign 合并")
+        elif not template_path:
+            state["stage"] = "needs_template"
+            state["warnings"].append("缺少或未通过校验的 ID 模板，无法自动导入")
+        else:
+            try:
+                from indesign_merge import merge as merge_indesign
+                merged = batch_dir / "拼图_待人工调整.indd"
+                merge_indesign(template_path, csv_path, merged)
+                state["merged_document"] = str(merged)
+                state["stage"] = "waiting_manual_export"
+            except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as exc:
+                state["stage"] = "indesign_merge_failed"
+                state["warnings"].append(f"InDesign 自动合并失败：{exc}")
     dump_json(meta / "batch.json", state)
     render_report(batch_dir, state)
     print(f"识别品类：{rule['name']}")
     print(f"第1步：生成图片汇总表：{csv_path}")
-    if template_path:
-        print(f"第2步请手动打开 ID 模板：{template_path}")
+    if args.merge:
+        if state["stage"] == "waiting_manual_export":
+            print(f"InDesign 自动导入并合并完成：{state['merged_document']}")
+            print("现在请在 InDesign 中人工检查、调整并导出图片。")
+        else:
+            print(f"尚未完成 InDesign 自动合并，当前阶段：{state['stage']}")
+    elif template_path:
+        print(f"模板已定位（本次仅生成表格）：{template_path}")
     elif template_warning:
         print(f"注意：{template_warning}")
     print(f"共 {len(rows)} 行，UTF-16 LE（带 BOM），图片字段以 @ 开头。")
@@ -379,9 +405,11 @@ def prepare(args):
     if unresolved:
         print(f"请先核对图片并填写映射：{meta / 'overrides-needed.json'}")
         print("当前表格仅供核对，暂勿导入 InDesign。")
-    else:
-        print("CSV 已生成；第一段尚未完成。Agent 必须继续调用用户指定的 InDesign 模板，在副本中导入并合并全部记录，保存待人工调图.indd 后再交付用户调图和导出。")
-    return 0
+    elif not args.merge:
+        print("仅 CSV 阶段完成。要自动导入 ID，请添加 --merge。")
+    return 0 if state["stage"] not in {
+        "needs_images", "needs_template", "indesign_merge_failed"
+    } else 1
 
 
 def check(args):
@@ -422,8 +450,11 @@ def resume(args):
     if not manifest.is_file():
         raise FileNotFoundError(f"找不到批次文件：{manifest}")
     state = json.loads(manifest.read_text(encoding="utf-8-sig"))
-    if state["stage"] == "needs_mapping":
-        raise ValueError("批次存在未解决的图片字段映射；先处理 overrides 后重新 prepare")
+    if state["stage"] not in ("waiting_manual_export", "completed_with_warnings"):
+        raise ValueError(
+            f"当前阶段为 {state['stage']}，还未生成可人工调整的 ID 合并文档；"
+            "必须先完成 InDesign 自动合并和人工导出"
+        )
     if state["stage"] == "completed":
         raise ValueError("批次已经完成，禁止覆盖；如要重新处理请新建批次")
     tools = tool_paths(args.tools or state["tools"])
@@ -501,6 +532,8 @@ def main(argv=None):
     p.add_argument("--output-root")
     p.add_argument("--date", help="YYYY-MM-DD，默认本机当前日期")
     p.add_argument("--overrides", help="手工映射 JSON 文件")
+    p.add_argument("--merge", action="store_true",
+                   help="生成 CSV 后自动调用桌面 InDesign 模板进行全部记录合并")
     p.set_defaults(func=prepare)
     p = sub.add_parser("resume", help="第3、4步：人工 ID 导出后的 OCR + 去文字")
     p.add_argument("--batch", required=True)
