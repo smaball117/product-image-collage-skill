@@ -1,70 +1,81 @@
 ---
 name: product-image-collage
-description: 只输入商品图片路径，自动选择品类并生成 InDesign 数据合并 CSV，提示对应内置模板；用户手动 ID 导出后自动 OCR 命名和遮罩去字。
+description: 用户只提供商品图片路径，Skill 自动生成 CSV、调用本地 Adobe InDesign 模板完成数据导入和全部记录合并，再由设计师人工调整导出；用户提供导出图片包路径后，自动 OCR 重命名并白遮罩去字。
 ---
 
-# Product Image Collage Skill
+# 商品图片拼图 Skill（自动填入 InDesign）
 
-## 用户输入
-例如：“调用 product-image-collage Skill，图片路径：F:\\2026年秋冬\\新品商品，帮我做拼图。”
+## 两次用户输入
 
-除图片路径之外无需重复提供工具路径或品类；只有图片编号不能可靠区分时才询问品类。运行环境必须能够访问本机文件和命令行（例如本地 Codex）。
+第一次：
+~~~text
+调用 product-image-collage Skill
+图片路径：F:/2026秋冬/商品图片
+帮我做拼图
+~~~
 
-## 内置资源
-- `scripts/scan_product_images.py`：编号识别函数
-- `scripts/ocr_rename_images.py`：PaddleOCR 中文识别、生成文件名
-- `scripts/batch_add_white_mask.py`：白遮罩去字
-- `scripts/batch_runner.py`：统一调度
-- `categories/underwear/rule.md`：内裤规则
-- `categories/underwear-set/rule.md`：内衣套规则
-- `assets/indesign/内裤数据合并模板-最终版.indd`：内裤 ID 模板
-- `assets/indesign/内衣套数据合并模板.indd`：内衣套 ID 模板
+第二次（人工调整并导出完成以后）：
+~~~text
+ID 已经导出，图片包路径：F:/2026秋冬/导出拼图
+继续处理上一批
+~~~
 
-三个脚本与规则均包含在 Skill 中，不再要求用户提供工具路径。二进制 ID 模板须在本地上述位置存在；若 GitHub 尚未同步，参照 `assets/indesign/README.md` 安装。
+用户无需每次输入 Python 工具路径、模板路径。运行环境必须是可以访问用户本地文件和桌面 Adobe InDesign 的 Windows Agent（如本地 Codex）。
 
-## 严格遵照用户的五步生产流程
+## 第一阶段：Agent 必须自动执行，不让用户手动导入 CSV
 
-### 1. Agent 生成 CSV 表格
-在本 Skill 根目录执行：
-
-```powershell
+执行：
+~~~powershell
 python scripts/batch_runner.py check --images "用户图片路径"
-python scripts/batch_runner.py prepare --images "用户图片路径"
-```
+python scripts/batch_runner.py prepare --images "用户图片路径" --merge
+~~~
 
-自动检测品类：`-5.jpg` 是内裤特征，`-1.jpg` 是内衣套特征。两种同时出现或缺少可靠标志时停止并询问 `--category 内裤` 或 `--category 内衣套`，绝不猜测。
+自动操作次序：
+1. 扫描货号/颜色/图片文件夹，按 categories/对应品类/rule.md 识别文件。
+2. 生成单一 UTF-16 LE（带 BOM）图片汇总.csv，图像列以 @ 开头，8 列及顺序严格对应 ID 模板。
+3. 自动选择 assets/indesign/ 里的正确 .indd 原模板。
+4. 使用 scripts/indesign_merge.py 通过 Windows PowerShell COM 执行 scripts/indesign_merge.jsx。
+5. JSX 必须真正执行 selectDataSource(CSV) 和 mergeRecords() 全部记录，并另存为新的可编辑 拼图_待人工调整.indd，在 InDesign 里留给设计师查看。
 
-**内衣套固定 8 列**：
-```csv
-货号,颜色,@上衣png,@下衣png,@领口,@袖口,@肩线,@裤腰
-```
-对应抓取 `-1.png`、`-2.png`、`-1.jpg`、`-2.jpg`、`-3.jpg`、`-4.jpg`。
+固定 CSV：
+内衣套：货号,颜色,@上衣png,@下衣png,@领口,@袖口,@肩线,@裤腰
+内裤：货号,颜色,@正面png,@背面png,@印花,@裤口,@裤边,@裤腰
 
-**内裤固定 8 列**：
-```csv
-货号,颜色,@正面png,@背面png,@印花,@裤口,@裤边,@裤腰
-```
-对应抓取 `-1.png`、`-2.png`、`-5.jpg`、`-2.jpg`、`-3.jpg`、`-4.jpg`。
+图片抓取：
+内衣套：PNG -1/-2，JPG -1/-2/-3/-4。
+内裤：PNG -1/-2，JPG -5/-2/-3/-4。
 
-图片单元格为完整本地绝对路径，CSV 为 UTF-16 LE（含 BOM）。
-用户在新建的日期品类批次内只需找到 `图片汇总.csv`；如出现重复字段冲突先输出 `图片汇总_待确认.csv`，不让用户误导入 ID。
+成功后只报告两个主文件：
+~~~text
+YYYY-MM-DD_品类/
+├── 图片汇总.csv
+└── 拼图_待人工调整.indd
+~~~
 
-### 2. 人工 InDesign
-告诉用户 CSV 完整路径和匹配的内置 `.indd` 模板完整路径，手动操作：打开 ID 模板 → 窗口 → 实用程序 → 数据合并 → 选择 CSV → 检查位置 → 导出图片。等用户提供导出图片目录。不得声称自动完成 ID。
+只创建 CSV 不算完成第一阶段，不得告知用户自己选数据源或合并。缺少模板、缺少必选图、品类有歧义或 COM 错误时必须停止并说明，不能报告已导入。
 
-### 3-4. Agent OCR 重命名 + 白遮罩去字
-```powershell
-python scripts/batch_runner.py resume --batch "第1步的批次目录" --exported "ID导出图片目录"
-```
-只操作副本，通过内置 OCR 脚本识别文字并重命名，再用遮罩脚本白色覆盖。遮罩参数 `x=0,y=1457,w=983,h=119` 适用于用户原模板，换模板需先确认。
+## 第二阶段：唯一人工节点
 
-### 5. 最终交付
-只报告 `日期品类批次/最终图片/` 完整路径，以及处理成功/失败张数。内部日志、导出副本、重命名副本置于隐藏的 `.skill/`，不在普通回复中列一堆文件。
+设计师打开自动生成并已经完成合并的 INDD，检查和调整版式、图片位置，然后人工导出 JPG/PNG 图片包。**不再手动执行数据源选择或数据合并。**
 
-## 硬规则
-1. 不修改任何原始图片。
-2. 无法可靠判断品类或字段时先询问，不盲猜。
-3. CSV 字段精确匹配品类模板，绝不增减或调整顺序。
-4. 同名批次追加序号，禁止覆盖。
-5. 必须等人工 ID 导出后才续跑 OCR。
-6. 不能在未进行真实本地 InDesign/OCR 测试时声称全链路已通过。
+## 第三阶段：Agent 自动 OCR + 去字
+
+用户提供 ID 导出图片路径，Agent 使用第一次输出的 batch 路径调用：
+~~~powershell
+python scripts/batch_runner.py resume --batch "对应日期品类批次目录" --exported "用户导出图片包路径"
+~~~
+
+使用内置脚本：
+- scripts/ocr_rename_images.py：识别图片文字并重命名 ID 导出图的副本。
+- scripts/batch_add_white_mask.py：使用原模板适配的固定遮罩 (0,1457,983,119) 覆盖文字。
+
+只交付 最终图片/ 目录和处理数量。内部状态与副本都放在隐藏的 .skill/。
+
+## 严格安全规则
+
+- 保留商品原图和两份模板原文件，严禁覆盖；数据合并必须生成新 INDD。
+- 同日同品类重复运行生成新批次名称。
+- 仅自动 InDesign 合并成功后才交给用户人工调整导出。
+- 不得在用户未导出图片之前调用 OCR/遮罩。
+- 本地 Windows + InDesign COM 尚未真实验证前，只能报告脚本/CI 检查结果，不得声称整条生产线已经打通。
+- 真实 .indd 二进制模板必须安装在 assets/indesign/；如不存在参照 assets/indesign/README.md。
