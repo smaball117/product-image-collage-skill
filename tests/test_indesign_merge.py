@@ -26,12 +26,14 @@ class InDesignMergeDriverTests(unittest.TestCase):
         self.output = root / "拼图_待人工调整.indd"
         self.fields = ["货号", "颜色", "@正面png", "@背面png",
                        "@印花", "@裤口", "@裤边", "@裤腰"]
+        self.image = root / "sample.png"
+        self.image.write_bytes(b"sample image path exists for dry run")
 
     def write_csv(self, columns):
         with self.csv.open("w", encoding="utf-16", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(columns)
-            writer.writerow(["01", "浅蓝"] + ["C:/sample.png"] * (len(columns) - 2))
+            writer.writerow(["01", "浅蓝"] + [str(self.image)] * (len(columns) - 2))
 
     def test_generate_windows_com_jsx_without_running_indesign(self):
         self.write_csv(self.fields)
@@ -42,6 +44,13 @@ class InDesignMergeDriverTests(unittest.TestCase):
         self.assertIn("RecordSelection.ALL_RECORDS", script)
         self.assertIn("mergeRecords()", script)
         self.assertIn("merged.save(target)", script)
+        self.assertIn("UserInteractionLevels.NEVER_INTERACT", script)
+        self.assertIn("savedInteractionLevel = app.scriptPreferences.userInteractionLevel", script)
+        self.assertIn("app.scriptPreferences.userInteractionLevel = savedInteractionLevel", script)
+        self.assertIn("finally {", script)
+        self.assertIn("verify_template_links", script)
+        self.assertIn("LinkStatus.LINK_MISSING", script)
+        self.assertIn("step=", script)
         self.assertIn("拼图", self.output.name)
         self.assertIn("\\u62fc", script)  # path uses unicode escape sequences
         self.assertNotIn("__JOB_JSON__", script)
@@ -50,6 +59,21 @@ class InDesignMergeDriverTests(unittest.TestCase):
     def test_reject_bad_csv_headers(self):
         self.write_csv(["货号", "颜色", "@one"])
         with self.assertRaises(ValueError):
+            module.merge(self.template, self.csv, self.output, dry_run=True)
+
+    def test_preflight_fails_for_missing_images(self):
+        self.write_csv(self.fields)
+        self.image.unlink()
+        with self.assertRaisesRegex(ValueError, "图片不存在"):
+            module.merge(self.template, self.csv, self.output, dry_run=True)
+        self.assertFalse(self.output.exists())
+
+    def test_preflight_fails_for_empty_image_cell(self):
+        with self.csv.open("w", encoding="utf-16", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow(self.fields)
+            writer.writerow(["01", "浅蓝"] + [""] * 6)
+        with self.assertRaisesRegex(ValueError, "为空"):
             module.merge(self.template, self.csv, self.output, dry_run=True)
 
     def test_refuse_overwrite_existing_merged_document(self):
