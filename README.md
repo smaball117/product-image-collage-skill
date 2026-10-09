@@ -1,83 +1,78 @@
-# Product Image Collage Skill
+# 商品图片自动拼图 Skill
 
-**输入一条商品图片文件夹路径 → 自动匹配品类 → 生成 InDesign CSV → 选中对应 ID 模板 → 用户手动导出 → OCR 重命名 → 去文字。**
+一次输入商品图片路径，自动完成扫描、CSV 和 InDesign 数据导入/合并；设计师只需要在 InDesign 中微调、导出。随后再输入导出图片包路径，自动 OCR 重命名与去字。
 
-这是可扩展的商品图片生产 Skill，适用于本地 Codex 等有本地文件权限的 Agent。
+## 运行流程
 
-## 目录与职责
+~~~text
+第一次输入：商品图片路径
+    ↓
+Agent：识别品类，生成图片汇总.csv（UTF-16 LE）
+    ↓
+Agent：用对应 InDesign 模板自动 selectDataSource + mergeRecords
+    ↓
+自动保存：拼图_待人工调整.indd（已完成数据合并，可编辑）
+    ↓
+【人工】：只调整图片布局、检查、导出 JPG/PNG
+    ↓
+第二次输入：ID 导出图片包路径
+    ↓
+Agent：OCR 文字识别 → 重命名副本 → 固定白遮罩
+    ↓
+最终图片/
+~~~
 
-```text
-product-image-collage-skill/
-├── SKILL.md                         # Agent 总指令
-├── scripts/
-│   ├── batch_runner.py              # 生产调度、CSV、状态与续跑
-│   ├── scan_product_images.py       # 商品图片编号解析
-│   ├── ocr_rename_images.py         # OCR 识字与安全命名
-│   └── batch_add_white_mask.py      # 固定白色遮罩去字
-├── categories/
-│   ├── underwear/rule.md            # 内裤 8 列 CSV
-│   ├── underwear-set/rule.md        # 内衣套 8 列 CSV
-│   └── template/rule-template.md
-├── assets/indesign/
-│   ├── 内裤数据合并模板-最终版.indd   # 二进制资源（需同步）
-│   └── 内衣套数据合并模板.indd       # 二进制资源（需同步）
-├── tests/                           # 自动化回归测试
-└── requirements.txt
-```
+## 依赖与安装
 
-三个 Python 脚本已经集成在仓库内，不需要再输入工具路径。二进制 ID 模板如果尚未存在于仓库，请看 [模板资源安装说明](assets/indesign/README.md)。**不应把只有说明文件的目录误认为模板已上传完毕。**
+- Windows 10/11，已安装并能够打开 Adobe InDesign 桌面版，系统注册 COM 对象 InDesign.Application。
+- Python 环境。首阶段执行扫描 + InDesign 合并，后处理需要 Pillow、PaddleOCR / PaddlePaddle。
+- scripts/ 下已内置：scan_product_images.py、ocr_rename_images.py、batch_add_white_mask.py、batch_runner.py、indesign_merge.py、indesign_merge.jsx。
+- assets/indesign/ 下必须有两份真实的 .indd 二进制模板：内裤数据合并模板-最终版.indd、内衣套数据合并模板.indd。
+- 注意：当前仓库可能只有模板的安装说明。使用前须把两份 .indd 真正放入对应目录，详见 assets/indesign/README.md。若是公司素材，请先确认公开仓库是否合适。
 
-## 只输入图片路径
+## 最简调用
 
-给本地 Agent 的提示词：
-
-```text
-调用 product-image-collage Skill。
-图片路径：F:\2026年秋冬\新品商品
+用户说：
+~~~text
+调用商品拼图 Skill。
+图片路径：F:/2026年秋冬/商品图片
 帮我做拼图。
-```
+~~~
 
-在 Skill 本地目录执行：
+本地 Codex 自动执行：
+~~~powershell
+python scripts/batch_runner.py check --images "F:/2026年秋冬/商品图片"
+python scripts/batch_runner.py prepare --images "F:/2026年秋冬/商品图片" --merge
+~~~
 
-```powershell
-python scripts/batch_runner.py check --images "F:\2026年秋冬\新品商品"
-python scripts/batch_runner.py prepare --images "F:\2026年秋冬\新品商品"
-```
+如果品类不能唯一识别，Agent 只询问一次品类，再加 --category 内裤 或 --category 内衣套 重试；不再每次要求提供工具路径或模板路径。
 
-程序依据素材命名判断品类；遇到内裤 `-5.jpg` 和内衣套 `-1.jpg` 同时存在的情况，会要求指定 `--category 内裤` / `--category 内衣套`，不会冒险猜测。默认只交付 `日期_品类/图片汇总.csv` 一份表格，UTF-16 LE（含 BOM）。
-
-## 正式 CSV 列名与图片抓取
+固定数据合并字段：
 
 内衣套：
-
-```csv
+~~~csv
 货号,颜色,@上衣png,@下衣png,@领口,@袖口,@肩线,@裤腰
-```
-
-按顺序读取 `-1.png`、`-2.png`、`-1.jpg`、`-2.jpg`、`-3.jpg`、`-4.jpg`。
+~~~
 
 内裤：
-
-```csv
+~~~csv
 货号,颜色,@正面png,@背面png,@印花,@裤口,@裤边,@裤腰
-```
+~~~
 
-按顺序读取 `-1.png`、`-2.png`、`-5.jpg`、`-2.jpg`、`-3.jpg`、`-4.jpg`。
+以上总计各 8 列，图片单元格指向本地原图片绝对路径。多条记录合并进一个新的可编辑 InDesign 文档。
 
-## 五步
+**注意**：出现缺图、字段冲突、模板缺失、InDesign COM 不可用时，程序应停在问题状态。不能仅因为 CSV 成功就向用户声称“ID 已自动填入”。
 
-1. **Agent 生成一份 CSV**。缺失和冲突内部记录，冲突导致 `图片汇总_待确认.csv`。
-2. **人工 InDesign**：用相应品类 .indd 模板导入 CSV，调整布局并导出。
-3. **Agent OCR**：用户给导出图路径，自动识别文字和按文字命名副本。
-4. **Agent 白遮罩**：覆盖固定文字区，输出去字图。
-5. **Agent 交付**：`最终图片/`，其余工作状态放在隐藏 `.skill/`。
+## 人工调整后继续
 
-手动 ID 导出后续跑：
+人工在自动合并的 拼图_待人工调整.indd 里调整和导出，不需要自己去选择数据源。给 Agent 提供导出图片包路径后执行：
 
-```powershell
-python scripts/batch_runner.py resume --batch "日期品类批次的完整路径" --exported "ID导出图片文件夹"
-```
+~~~powershell
+python scripts/batch_runner.py resume --batch "日期品类批次目录" --exported "图片包目录"
+~~~
 
-## 安装依赖
+成品只交付 最终图片/ 路径。后处理中原图与 ID 导出文件不被覆盖；OCR 和遮罩只操作副本。
 
-建议为 Pillow、PaddleOCR 2.x、PaddlePaddle 使用独立 Python 环境（参见 `requirements.txt`）。**当前回归测试只模拟 OCR；真实 OCR 模型与本机 Adobe InDesign 的模板兼容性必须本地验证。** GitHub 及云端聊天无法替代 Windows 上的 InDesign GUI。
+## 测试范围
+
+GitHub CI 可以测试 CSV、规则、Python 包装器、脚本生成和安全拦截；**不能在 Linux GitHub Actions 上真正启动 Windows InDesign COM**。首次生产需在你的 Windows + InDesign 本机做 1 个货号、1 个颜色的通路测试。
